@@ -11,13 +11,12 @@ import logging
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
+import tempfile
+
 import fitz  # PyMuPDF
 import requests
 
 logger = logging.getLogger(__name__)
-
-PDF_DIR = os.getenv("PDF_STORAGE_DIR", "pdfs")
-os.makedirs(PDF_DIR, exist_ok=True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -46,28 +45,81 @@ def _detect_tier(row: list[str]) -> Optional[str]:
 
 # ── Downloaders ───────────────────────────────────────────────────────────────
 
-def download_pdf(url: str) -> Optional[str]:
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/pdf"}
+
+
+def download_pdf(
+    url: str
+) -> Optional[str]:
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/pdf"
+    }
+
     try:
-        resp = requests.get(url, headers=headers, stream=True, timeout=30)
+
+        resp = requests.get(
+            url,
+            headers=headers,
+            stream=True,
+            timeout=30
+        )
+
         resp.raise_for_status()
-        ct = resp.headers.get("Content-Type", "").lower()
-        if "pdf" not in ct and not url.lower().endswith(".pdf"):
-            logger.warning("URL does not appear to be PDF: %s", url)
+
+        ct = resp.headers.get(
+            "Content-Type",
+            ""
+        ).lower()
+
+        if (
+            "pdf" not in ct
+            and not url.lower().endswith(".pdf")
+        ):
+
+            logger.warning(
+                "URL does not appear to be PDF: %s",
+                url
+            )
+
             return None
 
-        fname = os.path.basename(urlparse(url).path) or "doc.pdf"
-        local = os.path.join(PDF_DIR, f"{int(time.time())}_{fname}")
-        with open(local, "wb") as f:
+        suffix = os.path.basename(
+            urlparse(url).path
+        )
+
+        if not suffix.endswith(".pdf"):
+            suffix = ".pdf"
+
+        temp = tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=suffix
+        )
+
+        with temp as f:
+
             for chunk in resp.iter_content(8192):
+
                 if chunk:
                     f.write(chunk)
-        logger.info("Downloaded %s → %s", url, local)
-        return local
-    except Exception as exc:
-        logger.error("Download failed for %s: %s", url, exc)
-        return None
 
+        logger.info(
+            "Downloaded temporary PDF: %s",
+            temp.name
+        )
+
+        return temp.name
+
+    except Exception as exc:
+
+        logger.error(
+            "Download failed for %s: %s",
+            url,
+            exc
+        )
+
+        return None
+    
 
 # ── Extractors ────────────────────────────────────────────────────────────────
 
@@ -153,23 +205,76 @@ def extract_text(pdf_path: str) -> Optional[str]:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def load_document(path_or_url: str) -> Tuple[Optional[str], Optional[str]]:
+def load_document(
+    path_or_url: str
+) -> Tuple[Optional[str], Optional[str]]:
+
     """
-    Returns (table_text, full_text) for a single document.
-    Handles both URLs and local paths.
+    Returns:
+        (table_text, full_text)
+
+    Supports:
+    - PDF URLs
+    - Local PDF paths
+
+    Uses temporary-file cleanup for deployment-safe behavior.
     """
+
+    is_temp = False
+
+    # ── Remote PDF ────────────────────────────
     if path_or_url.startswith("http"):
+
         local = download_pdf(path_or_url)
+
+        is_temp = True
+
         if not local:
             return None, None
+
+    # ── Local PDF ─────────────────────────────
     else:
+
         local = path_or_url
+
         if not os.path.isfile(local):
-            logger.error("Local file not found: %s", local)
+
+            logger.error(
+                "Local file not found: %s",
+                local
+            )
+
             return None, None
 
-    return extract_tables(local), extract_text(local)
+    try:
 
+        table_text = extract_tables(local)
+
+        full_text = extract_text(local)
+
+        return table_text, full_text
+
+    finally:
+
+        # ── Cleanup temporary PDFs ────────────
+        if is_temp:
+
+            try:
+
+                os.remove(local)
+
+                logger.info(
+                    "Deleted temporary PDF: %s",
+                    local
+                )
+
+            except Exception as exc:
+
+                logger.warning(
+                    "Failed to delete temp PDF %s: %s",
+                    local,
+                    exc
+                )
 
 def load_documents(paths: list[str]) -> Tuple[str, str]:
     """

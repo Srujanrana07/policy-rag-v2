@@ -8,6 +8,11 @@ PDF URL(s) ──► extract text/tables ──► chunk ──► embed ──�
 Question   ──► embed ──► top-k retrieval ──► Gemini (streaming) ──► answer
 ```
 
+```
+https://raw.githubusercontent.com/SrujanRana/pdf/4f08d9fee570e7a0183ba9300d2b0a2b7cb605d8/BAJHLIP23020V012223.pdf
+```
+
+
 ---
 
 ## Project layout

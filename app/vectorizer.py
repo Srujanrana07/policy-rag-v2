@@ -1,47 +1,26 @@
 
 """
 Vectorizer: chunk → embed → FAISS index.
-Model is loaded once at startup and reused.
+Production-safe version:
+- No persistent disk cache
+- RAM/session-cache compatible
+- Semantic chunking for insurance PDFs
 """
 
 import logging
 import re
 from typing import List
-import hashlib
-import pickle
-import os
 
 import faiss
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
-# ── Cache Settings ──────────────────────────────────────────────
-MAX_CACHE_FILES = 20
-
-CACHE_DIR = "./index_cache"
-
-os.makedirs(CACHE_DIR, exist_ok=True)
-
 # ── Embedding Model ─────────────────────────────────────────────
+
 _MODEL: SentenceTransformer | None = None
 
 MODEL_NAME = "all-MiniLM-L6-v2"
-
-# ── Chunking Version ────────────────────────────────────────────
-CHUNKING_VERSION = "v2"
-
-
-def get_doc_hash(text: str) -> str:
-
-    payload = (
-        CHUNKING_VERSION
-        + text
-    )
-
-    return hashlib.md5(
-        payload.encode("utf-8")
-    ).hexdigest()
 
 
 def get_model() -> SentenceTransformer:
@@ -61,12 +40,13 @@ def get_model() -> SentenceTransformer:
             cache_folder="./model_cache"
         )
 
-        logger.info("Model loaded.")
+        logger.info("Embedding model loaded.")
 
     return _MODEL
 
 
 # ── Smart Chunking ──────────────────────────────────────────────
+
 def chunk_text(
     text: str,
     size: int = 500,
@@ -76,11 +56,13 @@ def chunk_text(
     """
     Smart chunking for insurance PDFs.
 
-    Strategy:
-    - Preserve table rows
-    - Preserve section blocks
-    - Preserve bullet groups
-    - Avoid splitting clauses
+    Features:
+    - Semantic paragraph grouping
+    - Table preservation
+    - Large-table splitting
+    - Heading preservation
+    - Bullet grouping
+    - Clause-safe overlap
     """
 
     if not text.strip():
@@ -110,6 +92,45 @@ def chunk_text(
         block = block.strip()
 
         if not block:
+            continue
+
+        # ── Large table splitting ───────────────
+        if "|" in block and len(block) > size:
+
+            rows = block.splitlines()
+
+            table_chunk = []
+
+            current_size = 0
+
+            for row in rows:
+
+                row_len = len(row)
+
+                if current_size + row_len > size:
+
+                    if table_chunk:
+
+                        chunks.append(
+                            "\n".join(table_chunk)
+                        )
+
+                    table_chunk = [row]
+
+                    current_size = row_len
+
+                else:
+
+                    table_chunk.append(row)
+
+                    current_size += row_len
+
+            if table_chunk:
+
+                chunks.append(
+                    "\n".join(table_chunk)
+                )
+
             continue
 
         # ── Table detection ─────────────────────
@@ -147,7 +168,10 @@ def chunk_text(
         if is_table or is_bullets or is_heading:
 
             if current.strip():
-                chunks.append(current.strip())
+
+                chunks.append(
+                    current.strip()
+                )
 
             chunks.append(block)
 
@@ -163,19 +187,26 @@ def chunk_text(
         else:
 
             if current.strip():
-                chunks.append(current.strip())
 
-            # ── Overlap retention ───────────────
-            tail = current[-overlap:]
+                chunks.append(
+                    current.strip()
+                )
 
-            if " " in tail:
-                tail = tail.split(" ", 1)[-1]
+            # ── Semantic overlap retention ──────
+            words = current.split()
+
+            tail_words = words[-20:]
+
+            tail = " ".join(tail_words)
 
             current = tail + "\n\n" + block
 
     # ── Final chunk ────────────────────────────
     if current.strip():
-        chunks.append(current.strip())
+
+        chunks.append(
+            current.strip()
+        )
 
     # ── Cleanup ────────────────────────────────
     cleaned = []
@@ -186,7 +217,7 @@ def chunk_text(
 
         c = c.strip()
 
-        if len(c) < 50:
+        if len(c.strip()) < 30:
             continue
 
         if c in seen:
@@ -205,6 +236,7 @@ def chunk_text(
 
 
 # ── Internal Index Builder ──────────────────────────────────────
+
 def _build_single_index(
     text: str,
     cache_prefix: str,
@@ -214,62 +246,6 @@ def _build_single_index(
     if not text.strip():
         return None, []
 
-    doc_hash = get_doc_hash(text)
-
-    faiss_path = os.path.join(
-        CACHE_DIR,
-        f"{cache_prefix}_{doc_hash}.faiss"
-    )
-
-    chunks_path = os.path.join(
-        CACHE_DIR,
-        f"{cache_prefix}_{doc_hash}.pkl"
-    )
-
-    # ── CACHE HIT ─────────────────────────────
-    if (
-        os.path.exists(faiss_path)
-        and os.path.exists(chunks_path)
-    ):
-
-        logger.info(
-            "Loading cached %s index",
-            cache_prefix
-        )
-
-        # ── Cache cleanup ──────────────────────
-        cache_files = sorted(
-            [
-                os.path.join(CACHE_DIR, f)
-                for f in os.listdir(CACHE_DIR)
-            ],
-            key=os.path.getmtime
-        )
-
-        cache_pairs = len(cache_files) // 2
-
-        if cache_pairs > MAX_CACHE_FILES:
-
-            files_to_remove = cache_files[:(
-                (cache_pairs - MAX_CACHE_FILES) * 2
-            )]
-
-            for old_file in files_to_remove:
-
-                try:
-                    os.remove(old_file)
-
-                except Exception:
-                    pass
-
-        index = faiss.read_index(faiss_path)
-
-        with open(chunks_path, "rb") as f:
-            chunks = pickle.load(f)
-
-        return index, chunks
-
-    # ── CACHE MISS ────────────────────────────
     logger.info(
         "Building %s index",
         cache_prefix
@@ -290,6 +266,7 @@ def _build_single_index(
     faiss.normalize_L2(embeddings)
 
     if len(embeddings.shape) != 2:
+
         raise ValueError(
             "Invalid embedding shape"
         )
@@ -302,17 +279,8 @@ def _build_single_index(
         embeddings.astype("float32")
     )
 
-    # ── Save cache ────────────────────────────
-    faiss.write_index(
-        index,
-        faiss_path
-    )
-
-    with open(chunks_path, "wb") as f:
-        pickle.dump(chunks, f)
-
     logger.info(
-        "Cached %s index with %d vectors",
+        "Built %s index with %d vectors",
         cache_prefix,
         index.ntotal
     )
@@ -321,6 +289,7 @@ def _build_single_index(
 
 
 # ── Public API ──────────────────────────────────────────────────
+
 def build_index(
     table_text: str,
     full_text: str
