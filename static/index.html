@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Policy RAG · Intelligence Engine</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #080b10;
+  --surface:  #0e1117;
+  --panel:    #131720;
+  --border:   #1c2230;
+  --border2:  #252e40;
+  --accent:   #3b82f6;
+  --accent2:  #60a5fa;
+  --teal:     #2dd4bf;
+  --green:    #22c55e;
+  --red:      #ef4444;
+  --yellow:   #f59e0b;
+  --text:     #e2e8f0;
+  --text2:    #8899b4;
+  --text3:    #3d4f6e;
+  --mono:     'JetBrains Mono', monospace;
+  --sans:     'Syne', sans-serif;
+  --radius:   8px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Grid noise texture overlay ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ── Header ── */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 52px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--sans);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
+.logo-mark {
+  width: 30px; height: 30px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--teal) 100%);
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  padding: 3px 8px;
+  border-radius: 20px;
+  border: 1px solid var(--border2);
+  color: var(--text3);
+  background: var(--panel);
+  white-space: nowrap;
+}
+
+.chip.online {
+  border-color: rgba(34,197,94,0.4);
+  color: var(--green);
+  background: rgba(34,197,94,0.06);
+}
+
+.chip.online::before {
+  content: '';
+  display: inline-block;
+  width: 5px; height: 5px;
+  background: var(--green);
+  border-radius: 50%;
+  margin-right: 5px;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.chip.offline {
+  border-color: rgba(239,68,68,0.3);
+  color: var(--red);
+}
+
+@keyframes pulse {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* ── Layout ── */
+.layout {
+  display: grid;
+  grid-template-columns: 290px 1fr;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.sidebar::-webkit-scrollbar { width: 3px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+.sb-section {
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sb-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 10px;
+}
+
+/* Inputs */
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+.field:last-child { margin-bottom: 0; }
+
+.field label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text2);
+  font-family: var(--mono);
+}
+
+input, textarea {
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 7px 10px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+input:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.12);
+}
+
+input::placeholder, textarea::placeholder { color: var(--text3); }
+
+/* Mode toggle */
+.mode-toggle {
+  display: flex;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: var(--radius);
+  padding: 3px;
+  gap: 2px;
+}
+
+.mode-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--text3);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 0.03em;
+}
+
+.mode-btn.active {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 6px rgba(59,130,246,0.35);
+}
+
+/* Doc list */
+.doc-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px; }
+
+.doc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text2);
+}
+
+.doc-item .doc-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-item .doc-icon { color: var(--accent2); flex-shrink: 0; }
+
+.doc-remove {
+  background: none;
+  border: none;
+  color: var(--text3);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 1px;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+
+.doc-remove:hover { color: var(--red); }
+
+.add-row { display: flex; gap: 6px; }
+.add-row input { flex: 1; }
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 8px 14px;
+  transition: all 0.15s;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+}
+
+.btn-primary:hover { background: #2563eb; box-shadow: 0 2px 12px rgba(59,130,246,0.4); }
+.btn-primary:disabled { background: var(--panel); color: var(--text3); cursor: not-allowed; box-shadow: none; }
+
+.btn-ghost {
+  background: var(--panel);
+  color: var(--text2);
+  border: 1px solid var(--border2);
+}
+
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent2); }
+
+.btn-sm { padding: 5px 10px; font-size: 10px; }
+.btn-full { width: 100%; margin-top: 8px; }
+
+/* ── Main panel ── */
+.main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+/* ── Chat area ── */
+.chat-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  scroll-behavior: smooth;
+}
+
+.chat-area::-webkit-scrollbar { width: 4px; }
+.chat-area::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* Empty state */
+.empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text3);
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.empty-glyph {
+  font-size: 52px;
+  line-height: 1;
+  opacity: 0.25;
+  filter: grayscale(1);
+}
+
+.empty-state h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text2);
+  letter-spacing: -0.02em;
+}
+
+.empty-state p {
+  font-size: 13px;
+  max-width: 340px;
+  line-height: 1.65;
+  color: var(--text3);
+  font-family: var(--mono);
+}
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: center;
+  margin-top: 8px;
+  max-width: 500px;
+}
+
+.pill {
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--text2);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pill:hover { border-color: var(--accent); color: var(--accent2); background: rgba(59,130,246,0.06); }
+
+/* Messages */
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 780px;
+  animation: fadeUp 0.2s ease;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.message.user  { align-self: flex-end;  align-items: flex-end; }
+.message.assistant { align-self: flex-start; align-items: flex-start; }
+
+.msg-meta {
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text3);
+  padding: 0 4px;
+}
+
+.bubble {
+  padding: 12px 16px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  word-break: break-word;
+}
+
+.message.user .bubble {
+  background: linear-gradient(135deg, var(--accent) 0%, #2563eb 100%);
+  color: #fff;
+  border-radius: 10px 10px 2px 10px;
+  box-shadow: 0 4px 16px rgba(59,130,246,0.25);
+}
+
+.message.assistant .bubble {
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 2px 10px 10px 10px;
+  color: var(--text);
+}
+
+.bubble.streaming {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.15);
+}
+
+.cursor {
+  display: inline-block;
+  width: 7px; height: 13px;
+  background: var(--accent2);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  border-radius: 1px;
+  animation: blink 0.75s step-end infinite;
+}
+
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* Status */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent2);
+  padding: 9px 14px;
+  background: rgba(59,130,246,0.05);
+  border: 1px solid rgba(59,130,246,0.18);
+  border-radius: var(--radius);
+  max-width: 360px;
+  animation: fadeUp 0.2s ease;
+}
+
+.spinner {
+  width: 11px; height: 11px;
+  border: 2px solid rgba(59,130,246,0.25);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.sys-msg {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text3);
+  text-align: center;
+  padding: 2px 0;
+}
+
+.error-msg {
+  background: rgba(239,68,68,0.06);
+  border: 1px solid rgba(239,68,68,0.25);
+  border-radius: var(--radius);
+  color: var(--red);
+  font-size: 12px;
+  font-family: var(--mono);
+  padding: 10px 14px;
+  max-width: 480px;
+  animation: fadeUp 0.2s ease;
+}
+
+/* ── Input bar ── */
+.input-bar {
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding: 14px 24px 16px;
+  flex-shrink: 0;
+}
+
+.input-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 10px 10px 10px 16px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input-wrap:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.1);
+}
+
+.input-wrap textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  font-family: var(--sans);
+  font-size: 14px;
+  color: var(--text);
+  resize: none;
+  outline: none;
+  min-height: 22px;
+  max-height: 130px;
+  padding: 0;
+  line-height: 1.55;
+  box-shadow: none;
+}
+
+.input-wrap textarea:focus { box-shadow: none; border-color: transparent; }
+
+.send-btn {
+  background: var(--accent);
+  border: none;
+  border-radius: 7px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  height: 34px; width: 34px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+  box-shadow: 0 2px 8px rgba(59,130,246,0.3);
+}
+
+.send-btn:hover { background: #2563eb; transform: translateY(-1px); }
+.send-btn:active { transform: scale(0.93); }
+.send-btn:disabled { background: var(--panel); cursor: not-allowed; box-shadow: none; }
+
+.input-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text3);
+  padding: 0 2px;
+}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <div class="logo-mark">⚡</div>
+    Policy RAG
+  </div>
+  <div class="header-right">
+    <span class="chip">gemini-1.5-flash</span>
+    <span class="chip">FAISS</span>
+    <span class="chip" id="status-chip">connecting…</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sb-section">
+      <div class="sb-label">Connection</div>
+      <div class="field">
+        <label>API Base URL</label>
+        <input id="api-url" type="text" value="http://localhost:8000" />
+      </div>
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-label">Response Mode</div>
+      <div class="mode-toggle">
+        <button class="mode-btn active" onclick="setMode('stream',this)">⚡ Stream</button>
+        <button class="mode-btn"        onclick="setMode('sync',this)">⏱ Sync</button>
+      </div>
+    </div>
+
+    <div class="sb-section" style="flex:1">
+      <div class="sb-label">Documents</div>
+      <div class="doc-list" id="doc-list"></div>
+      <div class="add-row">
+        <input id="url-input" type="text" placeholder="Paste PDF URL…" />
+        <button class="btn btn-ghost btn-sm" onclick="addDoc()">Add</button>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="loadDemo()">Load Demo</button>
+    </div>
+
+    <div class="sb-section">
+      <div class="sb-label">Actions</div>
+      <button class="btn btn-ghost" style="width:100%" onclick="resetChat()">↺ Clear Chat</button>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="chat-area" id="chat-area">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-glyph">🗂</div>
+        <h2>Ask anything about your policy</h2>
+        <p>Add PDF documents in the sidebar, then ask a question. Answers stream in real-time.</p>
+        <div class="pills" id="example-pills">
+          <span class="pill" onclick="useExample(this)">Is cataract surgery covered for 5L sum insured?</span>
+          <span class="pill" onclick="useExample(this)">What is the waiting period for pre-existing diseases?</span>
+          <span class="pill" onclick="useExample(this)">Room rent limit for 10L policy?</span>
+          <span class="pill" onclick="useExample(this)">Is robotic surgery covered under 20L plan?</span>
+          <span class="pill" onclick="useExample(this)">Chemotherapy coverage for 15L policy?</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-bar">
+      <div class="input-wrap">
+        <textarea
+          id="q-input"
+          placeholder="Ask about your insurance policy…"
+          rows="1"
+          onkeydown="handleKey(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendQuery()" title="Send (Enter)">↑</button>
+      </div>
+      <div class="input-footer">
+        <span id="mode-hint">⚡ Streaming — tokens appear as they generate</span>
+        <span>Enter to send · Shift+Enter new line</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────────
+let mode = 'stream';
+let docs = [];
+let busy = false;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const apiBase = () => document.getElementById('api-url').value.replace(/\/$/, '');
+const qInput  = () => document.getElementById('q-input');
+const chatArea = () => document.getElementById('chat-area');
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 130) + 'px';
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(); }
+}
+
+function useExample(el) {
+  qInput().value = el.textContent.trim();
+  autoResize(qInput());
+  qInput().focus();
+}
+
+function setMode(m, btn) {
+  mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('mode-hint').textContent =
+    m === 'stream' ? '⚡ Streaming — tokens appear as they generate'
+                   : '⏱ Sync — full response at once';
+}
+
+function escape(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>');
+}
+
+function scrollBottom() {
+  const a = chatArea(); a.scrollTop = a.scrollHeight;
+}
+
+// ── Doc management ────────────────────────────────────────────────────────────
+function addDoc() {
+  const inp = document.getElementById('url-input');
+  const url = inp.value.trim();
+  if (!url || docs.includes(url)) { inp.value=''; return; }
+  docs.push(url);
+  renderDocs();
+  inp.value = '';
+}
+
+document.getElementById('url-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') addDoc();
+});
+
+function removeDoc(url) {
+  docs = docs.filter(d => d !== url);
+  renderDocs();
+}
+
+function renderDocs() {
+  const list = document.getElementById('doc-list');
+  list.innerHTML = docs.map(url => {
+    const name = url.split('/').pop().slice(0, 32) || url;
+    const safe = url.replace(/'/g, "\\'");
+    return `<div class="doc-item">
+      <span class="doc-icon">📄</span>
+      <span class="doc-name" title="${url}">${name}</span>
+      <button class="doc-remove" onclick="removeDoc('${safe}')">×</button>
+    </div>`;
+  }).join('');
+}
+
+function loadDemo() {
+  docs = ['https://www.irdai.gov.in/ADMINCMS/cms/Uploadedfiles/NL_Products/2023/Health_IndividualMedical.pdf'];
+  renderDocs();
+  sysMsg('Demo document loaded. Try asking a question!');
+}
+
+// ── Chat rendering ────────────────────────────────────────────────────────────
+function showEmpty(v) {
+  document.getElementById('empty-state').style.display = v ? 'flex' : 'none';
+}
+
+function appendMsg(role, text, streaming = false) {
+  showEmpty(false);
+  const div = document.createElement('div');
+  div.className = `message ${role}`;
+  const id = `b-${Date.now()}`;
+  div.innerHTML = `
+    <div class="msg-meta">${role === 'user' ? 'You' : 'Assistant'}</div>
+    <div class="bubble${streaming ? ' streaming' : ''}" id="${id}">
+      ${escape(text)}${streaming ? '<span class="cursor"></span>' : ''}
+    </div>`;
+  chatArea().appendChild(div);
+  scrollBottom();
+  return document.getElementById(id);
+}
+
+function appendStatus(msg) {
+  const div = document.createElement('div');
+  div.className = 'status-row';
+  div.id = 'status-row';
+  div.innerHTML = `<div class="spinner"></div><span id="status-text">${msg}</span>`;
+  chatArea().appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function sysMsg(msg) {
+  const div = document.createElement('div');
+  div.className = 'sys-msg';
+  div.textContent = '── ' + msg + ' ──';
+  chatArea().appendChild(div);
+}
+
+function errMsg(msg) {
+  const div = document.createElement('div');
+  div.className = 'error-msg';
+  div.textContent = '⚠ ' + msg;
+  chatArea().appendChild(div);
+  scrollBottom();
+}
+
+function setBusy(v) {
+  busy = v;
+  document.getElementById('send-btn').disabled = v;
+  qInput().disabled = v;
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────────
+async function sendQuery() {
+  if (busy) return;
+  const q = qInput().value.trim();
+  if (!q) return;
+  if (!docs.length) { alert('Add at least one document URL first.'); return; }
+
+  qInput().value = '';
+  autoResize(qInput());
+  appendMsg('user', q);
+  setBusy(true);
+
+  try {
+    if (mode === 'stream') await streamQuery(q);
+    else                   await syncQuery(q);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function streamQuery(question) {
+  const statusEl = appendStatus('Connecting…');
+  const params = new URLSearchParams({ question, documents: docs.join(',') });
+
+  let bubble = null, full = '';
+
+  try {
+    const res = await fetch(`${apiBase()}/stream-query?${params}`, {
+      headers: { Accept: 'text/event-stream' }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const d = JSON.parse(line.slice(5).trim());
+
+          if (d.message) {
+            document.getElementById('status-text').textContent = d.message;
+          }
+          if (d.error) {
+            statusEl.remove();
+            errMsg(d.error);
+            return;
+          }
+          if (d.token !== undefined) {
+            if (!bubble) { statusEl.remove(); bubble = appendMsg('assistant', '', true); }
+            full += d.token;
+            bubble.innerHTML = escape(full) + '<span class="cursor"></span>';
+            scrollBottom();
+          }
+          if (d.answer !== undefined) {
+            if (bubble) { bubble.classList.remove('streaming'); bubble.innerHTML = escape(d.answer); }
+            else { statusEl.remove(); appendMsg('assistant', d.answer); }
+          }
+        } catch(err) {
+  console.error(err);
+}
+      }
+    }
+  } catch(err) {
+    try { statusEl.remove(); }catch(err) {
+  console.error(err);
+}
+    errMsg('Streaming failed: ' + err.message + '. Is the API running?');
+  }
+}
+
+async function syncQuery(question) {
+  const statusEl = appendStatus('Processing…');
+  try {
+    const res = await fetch(`${apiBase()}/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ documents: docs, questions: [question] }),
+    });
+    const data = await res.json();
+    statusEl.remove();
+    if (!res.ok) { errMsg(data.detail || data.error || `HTTP ${res.status}`); return; }
+    const ans = data.answers?.[0] || 'No answer returned.';
+    appendMsg('assistant', ans);
+    if (data.processing_time) sysMsg(`Processed in ${data.processing_time.toFixed(2)}s`);
+  } catch(err) {
+    statusEl.remove();
+    errMsg('Request failed: ' + err.message);
+  }
+}
+
+function resetChat() {
+  chatArea().innerHTML = `
+    <div class="empty-state" id="empty-state">
+      <div class="empty-glyph">🗂</div>
+      <h2>Ask anything about your policy</h2>
+      <p>Add PDF documents in the sidebar, then ask a question. Answers stream in real-time.</p>
+      <div class="pills">
+        <span class="pill" onclick="useExample(this)">Is cataract surgery covered for 5L sum insured?</span>
+        <span class="pill" onclick="useExample(this)">What is the waiting period for pre-existing diseases?</span>
+        <span class="pill" onclick="useExample(this)">Room rent limit for 10L policy?</span>
+        <span class="pill" onclick="useExample(this)">Is robotic surgery covered under 20L plan?</span>
+        <span class="pill" onclick="useExample(this)">Chemotherapy coverage for 15L policy?</span>
+      </div>
+    </div>`;
+}
+
+// ── Health check ──────────────────────────────────────────────────────────────
+async function checkHealth() {
+  const chip = document.getElementById('status-chip');
+  try {
+    const res = await fetch(apiBase() + '/health', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      chip.textContent = 'API online';
+      chip.className = 'chip online';
+    } else {
+      chip.textContent = 'API error';
+      chip.className = 'chip';
+    }
+  } catch {
+    chip.textContent = 'API offline';
+    chip.className = 'chip offline';
+  }
+}
+
+checkHealth();
+setInterval(checkHealth, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+pdfs/
+logs/
+model_cache/
+*.pdf
+.git
+.gitignore
+README.md   
+venv/
+.venv/
+index_cache/
+dist/
+build/

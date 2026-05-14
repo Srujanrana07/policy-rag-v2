@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+pdfs/
+logs/
+model_cache/
+index_cache/
+*.pdf
+venv/
+.venv/
+dist/
+build/
