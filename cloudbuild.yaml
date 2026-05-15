@@ -1,32 +1,46 @@
-# cloudbuild.yaml
-# Triggered automatically on git push via Cloud Build triggers.
-# Requires these substitutions set in the trigger:
-#   _SERVICE_NAME  (e.g. rag-policy-agent)
-#   _REGION        (e.g. asia-south1)
-#   _GEMINI_KEY    (store in Secret Manager, reference as $$GEMINI_API_KEY)
+# =============================================================================
+# cloudbuild.yaml — Cloud Build CI/CD for RAG Policy Agent
+#
+# Triggered automatically on push to main via a Cloud Build trigger.
+#
+# Required substitutions (set in the trigger UI or --substitutions flag):
+#   _SERVICE_NAME   e.g. rag-policy-agent
+#   _REGION         e.g. asia-south1
+#
+# GEMINI_API_KEY is pulled from Secret Manager at deploy time (never hardcoded).
+# Grant the Cloud Build SA the role: roles/secretmanager.secretAccessor
+# =============================================================================
 
 substitutions:
   _SERVICE_NAME: rag-policy-agent
   _REGION: asia-south1
 
 steps:
-  # 1. Build the Docker image
-  - name: 'gcr.io/cloud-builders/docker'
+  # ── 1. Build the Docker image ──────────────────────────────────────────────
+  - id: build
+    name: gcr.io/cloud-builders/docker
     args:
       - build
+      - --cache-from=gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest   # layer cache
       - -t
       - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA
       - -t
       - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:latest
       - .
-    timeout: 1200s
+    timeout: 1800s   # model bake-in can be slow on first build
 
-  # 2. Push both tags
-  - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}']
+  # ── 2. Push both tags ──────────────────────────────────────────────────────
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - gcr.io/$PROJECT_ID/${_SERVICE_NAME}
+    waitFor: [build]
 
-  # 3. Deploy to Cloud Run
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  # ── 3. Deploy to Cloud Run ─────────────────────────────────────────────────
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
       - run
@@ -36,14 +50,17 @@ steps:
       - --region=${_REGION}
       - --platform=managed
       - --allow-unauthenticated
+      # Resource settings — tuned for the lighter image
       - --memory=2Gi
       - --cpu=2
       - --timeout=300
       - --concurrency=4
       - --min-instances=0
-      - --max-instances=3
+      - --max-instances=5
+      # Secrets — Gemini key injected at runtime, never in image
       - --set-secrets=GEMINI_API_KEY=gemini-api-key:latest
       - --quiet
+    waitFor: [push]
 
 images:
   - gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA
@@ -51,4 +68,4 @@ images:
 
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: E2_HIGHCPU_8
+  machineType: E2_HIGHCPU_8   # faster build; model bake-in is CPU-bound
